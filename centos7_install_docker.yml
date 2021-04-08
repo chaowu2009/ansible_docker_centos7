@@ -1,0 +1,120 @@
+---
+# ref: https://stackoverflow.com/questions/43050128/ansible-no-package-available-for-docker-ce
+- name: Install docker
+  gather_facts: true
+  check_mode: no # yes only for test
+  hosts: all
+  vars:
+    sudoers:
+      - ansible
+  become: true
+  tasks:
+
+    #################### ABSENT ########################
+# systemctl status docker
+    - name: Stop and disable docker service
+      service:
+        name: docker
+        enabled: no
+        state: stopped
+      register: docker_service_result
+      failed_when: "docker_service_result is failed and 'Could not find the requested service' not in docker_service_result.msg"
+
+# grep /etc/group -e "docker"
+    - name: Remove docker group
+      group:
+        name: docker
+        state: absent
+        system: yes
+
+    - name: Remove 'docker', 'yum-utils', 'lvm2' and 'device-mapper-persistent-data' packages
+      package:
+        name: '{{ item }}'
+        state: absent
+      with_items:
+        - docker
+        - docker-client
+        - docker-client-latest
+        - docker-common
+        - docker-latest
+        - docker-latest-logrotate
+        - docker-logrotate
+        - docker-engine
+        - docker-ce
+        - docker-ce-cli
+        - containerd.io
+        - lvm2
+        - device-mapper-persistent-data
+        - yum-utils
+
+# sudo vi /etc/yum.repos.d/docker-ce.repo
+    - name: Remove docker repository
+      yum_repository:
+        name: docker-ce
+        state: absent
+
+#################### PRESENT ########################
+    - name: Install 'yum-utils', 'lvm2' and 'device-mapper-persistent-data'
+      package:
+        name: '{{ item }}'
+        state: latest
+      with_items:
+        - yum-utils
+        - device-mapper-persistent-data
+        - lvm2
+
+    - name: Install docker repository
+      yum_repository:
+        name: '{{ item.name }}'
+        description: '{{ item.desc }}'
+        file: docker-ce
+        baseurl: '{{ item.baseurl }}'
+        enabled: '1'
+        gpgcheck: yes
+        gpgkey: 'https://download.docker.com/linux/centos/gpg'
+        state: present
+      with_items:
+        - { name: 'docker-ce-stable', desc: 'Docker CE Stable - $basearch', baseurl: 'https://download.docker.com/linux/centos/7/$basearch/stable'}
+        - { name: 'docker-ce-edge', desc: 'Docker CE Edge - $basearch', baseurl: 'https://download.docker.com/linux/centos/7/$basearch/edge'}
+        - { name: 'docker-ce-test', desc: 'Docker CE Test - $basearch', baseurl: 'https://download.docker.com/linux/centos/7/$basearch/test'}
+
+    - name: Install docker
+      package:
+        name: '{{ item }}'
+        state: latest
+      with_items:
+        - docker-ce
+        - docker-ce-cli
+        - containerd.io
+
+    - name: Start docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Test Docker with hello world example
+      shell: 'docker run hello-world'
+      register: hello_world_output
+
+    - name: Show output of hello word example
+      debug:
+        msg: 'Container output: {{ hello_world_output.stdout }}'
+
+    - name: Create docker group
+      group:
+        name: docker
+        state: present
+        system: yes
+
+    - name: Add ansible to docker group
+      user:
+        name: ansible
+        groups: docker
+        append: yes
+
+    - name: Reboot server
+      shell: 'sleep 1 && reboot'
+      async: 1
+      poll: 0
+
